@@ -1,136 +1,54 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8" />
-  <title>Compra DBC (Devnet)</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; max-width: 720px }
-    input, button { padding: 10px; font-size: 16px; margin: 6px 0; width: 100% }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
-    .muted { color: #666; font-size: 14px }
-    .ok { color: #0a7 }
-    .err { color: #c33 }
-    code { background: #f3f3f3; padding: 2px 4px; border-radius: 4px }
-  </style>
+  <meta charset="utf-8">
+  <title>Compra Token (Devnet)</title>
 </head>
 <body>
-  <h1>Compra de token (Meteora DBC · Devnet)</h1>
-
-  <p class="muted">Conecta Phantom en Devnet y compra el token de tu pool DBC.</p>
-
   <button id="connect">Conectar Phantom</button>
-  <div id="wallet" class="muted"></div>
+  <p id="wallet"></p>
 
-  <h3>Datos de compra</h3>
-  <div class="row">
-    <div>
-      <label>Pool (PDA)</label>
-      <input id="pool" placeholder="Opcional si pones baseMint" />
-    </div>
-    <div>
-      <label>baseMint (SOL→TOKEN)</label>
-      <input id="baseMint" placeholder="Opcional si pones pool" />
-    </div>
-  </div>
+  <input id="pool" placeholder="Pool PDA">
+  <input id="baseMint" placeholder="Base Mint">
+  <input id="amountSol" placeholder="Monto en SOL">
 
-  <label>Monto en SOL</label>
-  <input id="amountSol" type="number" step="0.0001" placeholder="0.05" />
+  <button id="buy">Comprar</button>
 
-  <div class="row">
-    <button id="quoteBtn">Ver Quote</button>
-    <button id="buyBtn">Comprar</button>
-  </div>
-
-  <div id="log"></div>
+  <pre id="log"></pre>
 
   <script type="module">
     import { Connection, VersionedTransaction } from "https://esm.sh/@solana/web3.js@1.95.3"
-    const BACKEND = location.origin // ajusta si tu backend está en otro host
-    const conn = new Connection('https://api.devnet.solana.com', 'confirmed')
-
-    const $ = (id) => document.getElementById(id)
-    const log = (msg, cls='muted') => { const d = document.createElement('div'); d.className=cls; d.textContent = msg; $('log').prepend(d) }
+    const BACKEND = "https://comprartokendevnetbackend-production.up.railway.app"  // ajusta a tu backend
 
     let wallet = null
+    const conn = new Connection("https://api.devnet.solana.com", "confirmed")
 
-    $('connect').onclick = async () => {
-      try {
-        const provider = window.solana
-        if (!provider?.isPhantom) { log('Phantom no detectado', 'err'); return }
-        const r = await provider.connect()
-        wallet = r.publicKey.toString()
-        $('wallet').textContent = `Conectado: ${wallet}`
-        log('Wallet conectada', 'ok')
-      } catch (e) {
-        log('Error conectando Phantom: ' + (e?.message || e), 'err')
-      }
+    document.getElementById("connect").onclick = async () => {
+      const provider = window.solana
+      const r = await provider.connect()
+      wallet = r.publicKey.toString()
+      document.getElementById("wallet").textContent = "Wallet: " + wallet
     }
 
-    $('quoteBtn').onclick = async () => {
-      try {
-        const pool = $('pool').value.trim()
-        const baseMint = $('baseMint').value.trim()
-        const amountSol = $('amountSol').value.trim()
-        if (!amountSol) return log('amountSol requerido', 'err')
-        if (!pool && !baseMint) return log('pool o baseMint requerido', 'err')
+    document.getElementById("buy").onclick = async () => {
+      const pool = document.getElementById("pool").value
+      const baseMint = document.getElementById("baseMint").value
+      const amountSol = document.getElementById("amountSol").value
+      const body = { buyer: wallet, amountSol }
+      if (pool) body.pool = pool
+      if (baseMint) body.baseMint = baseMint
 
-        const qs = new URLSearchParams({ amountSol })
-        if (pool) qs.set('pool', pool)
-        if (baseMint) qs.set('baseMint', baseMint)
+      const r = await fetch(`${BACKEND}/build-initial-buy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      const j = await r.json()
+      const txBytes = Uint8Array.from(atob(j.transaction), c => c.charCodeAt(0))
+      const tx = VersionedTransaction.deserialize(txBytes)
 
-        const r = await fetch(`${BACKEND}/quote?${qs.toString()}`)
-        const j = await r.json()
-        if (!r.ok) throw new Error(j?.error || 'Quote falló')
-        log(`Quote OK · minOut=${j.minimumAmountOut}`, 'ok')
-      } catch (e) {
-        log('Quote error: ' + (e?.message || e), 'err')
-      }
-    }
-
-    $('buyBtn').onclick = async () => {
-      try {
-        if (!wallet) return log('Conecta Phantom primero', 'err')
-        const provider = window.solana
-
-        const pool = $('pool').value.trim()
-        const baseMint = $('baseMint').value.trim()
-        const amountSol = $('amountSol').value.trim()
-        if (!amountSol) return log('amountSol requerido', 'err')
-        if (!pool && !baseMint) return log('pool o baseMint requerido', 'err')
-
-        const body = { buyer: wallet, amountSol }
-        if (pool) body.pool = pool
-        if (baseMint) body.baseMint = baseMint
-
-        const r = await fetch(`${BACKEND}/build-initial-buy`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-        const j = await r.json()
-        if (!r.ok) throw new Error(j?.error || 'Construcción falló')
-
-        // Deserializar base64 a VersionedTransaction, firmar y enviar con Phantom
-        const txBytes = Uint8Array.from(atob(j.transaction), c => c.charCodeAt(0))
-        const tx = VersionedTransaction.deserialize(txBytes)
-
-        // Phantom v1: signAndSendTransaction acepta Transaction/VersionedTransaction
-        const sigResp = await provider.signAndSendTransaction(tx)
-        const signature = sigResp.signature || sigResp
-
-        log('Enviada. signature: ' + signature, 'ok')
-
-        // Esperar confirmación
-        const conf = await conn.confirmTransaction(signature, 'confirmed')
-        if (conf?.value?.err) {
-          log('Confirmación con error: ' + JSON.stringify(conf.value.err), 'err')
-        } else {
-          log('Confirmada ✅ ' + signature, 'ok')
-        }
-      } catch (e) {
-        log('Compra error: ' + (e?.message || e), 'err')
-      }
+      const sig = await window.solana.signAndSendTransaction(tx)
+      document.getElementById("log").textContent = "Tx enviada: " + JSON.stringify(sig)
     }
   </script>
 </body>

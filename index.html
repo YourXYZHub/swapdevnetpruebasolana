@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Swap Devnet (Phantom + Jupiter)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji'; background: #0b1220; color: #e6eaf2; margin: 0; }
+    .wrap { max-width: 980px; margin: 40px auto; padding: 24px; }
+    .card { background: #121a2a; border: 1px solid #22304f; border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+    h1 { font-size: 22px; margin: 0 0 16px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+    label { display: block; font-size: 12px; opacity: .85; margin-bottom: 6px; }
+    input, select, button, textarea { width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid #2a3a60; background: #0d1424; color: #e6eaf2; }
+    input::placeholder { color: #93a1c4; opacity: .7; }
+    button { cursor: pointer; font-weight: 600; }
+    .btn { background: linear-gradient(180deg,#8b5cf6,#7c3aed); border: none; }
+    .btn-outline { background: transparent; border: 1px solid #2a3a60; }
+    .muted { color: #93a1c4; font-size: 12px; }
+    .ok { color: #34d399; }
+    .err { color: #f87171; }
+    .log { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; background: #0a0f1d; border: 1px dashed #334269; border-radius: 12px; padding: 12px; max-height: 260px; overflow: auto; }
+    .pill { display:inline-block; border:1px solid #2a3a60; border-radius:999px; padding:6px 10px; font-size:12px; margin-right:8px; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    a { color: #93c5fd; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Swap en <span class="pill">Devnet</span> con Phantom + Jupiter API</h1>
+      <p class="muted">Conecta tu Phantom (en Devnet), pega el <strong>mint</strong> de tu token y compra con SOL usando la API pública de Jupiter (v6). Si Jupiter no encuentra ruta en Devnet, te diré cómo mintear directamente a tu wallet para pruebas.</p>
+
+      <div class="grid" style="margin-top:16px">
+        <div>
+          <label>RPC endpoint (Devnet)</label>
+          <input id="endpoint" value="https://api.devnet.solana.com" />
+        </div>
+        <div>
+          <label>Slippage (BPS)</label>
+          <input id="slippage" type="number" value="50" />
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <div>
+          <label>Mint de salida (tu token en Devnet)</label>
+          <input id="outputMint" placeholder="Ej: YOUR_TOKEN_MINT" />
+        </div>
+        <div>
+          <label>Cantidad de SOL a gastar (ExactIn)</label>
+          <input id="amountSol" type="number" min="0" step="0.000001" value="0.01" />
+        </div>
+      </div>
+
+      <div class="row3" style="margin-top:12px">
+        <div>
+          <label>Usar wSOL al swapear</label>
+          <select id="wrapSol">
+            <option value="true" selected>wrap/unwrap automáticamente</option>
+            <option value="false">no wrap</option>
+          </select>
+        </div>
+        <div>
+          <label>Priority fee (μ-lamports)</label>
+          <input id="priority" type="number" value="0" />
+        </div>
+        <div>
+          <label>Solo rutas directas</label>
+          <select id="onlyDirect">
+            <option value="false" selected>no</option>
+            <option value="true">sí</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="margin:16px 0; display:flex; gap:10px;">
+        <button id="btnConnect" class="btn-outline">Conectar Phantom</button>
+        <button id="btnSwap" class="btn">Swap SOL → Token</button>
+        <button id="btnMint" class="btn-outline">(Fallback) Mintear a mi wallet</button>
+      </div>
+
+      <div class="muted" style="margin-bottom:8px">Estado:</div>
+      <div id="status" class="log"></div>
+
+      <p class="muted" style="margin-top:14px">Tips:
+        <br>• Asegúrate de que <strong>Phantom está en Devnet</strong> (Settings → Developer Settings → Change Network → Devnet).
+        <br>• El token debe tener al menos <strong>una ruta</strong> conocida por Jupiter en Devnet (tu pool en Meteora/Raydium).
+        <br>• Si no hay ruta, usa el botón de <strong>Mintear</strong> para pruebas.
+      </p>
+    </div>
+  </div>
+
+  <script type="module">
+    // Minimal ESM imports (solo para helpers locales)
+    import { Connection, PublicKey, clusterApiUrl } from 'https://esm.sh/@solana/web3.js@1.95.3';
+
+    const $ = (id) => document.getElementById(id);
+    const log = (msg, cls='') => {
+      const el = $('status');
+      const line = document.createElement('div');
+      line.className = cls;
+      line.textContent = typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2);
+      el.appendChild(line);
+      el.scrollTop = el.scrollHeight;
+      console.log(msg);
+    };
+
+    // Phantom provider detection
+    const getProvider = () => {
+      if ('solana' in window) {
+        const provider = window.solana;
+        if (provider?.isPhantom) return provider;
+      }
+      return null;
+    };
+
+    let provider = null;
+    let owner = null;
+
+    $('btnConnect').onclick = async () => {
+      try {
+        provider = getProvider();
+        if (!provider) {
+          log('Phantom no detectado. Instala Phantom y recarga.', 'err');
+          return;
+        }
+        const resp = await provider.connect();
+        owner = new PublicKey(resp.publicKey);
+        log(`Conectado: ${owner.toBase58()}`, 'ok');
+      } catch (e) {
+        log(`Error conectando: ${e.message || e}`, 'err');
+      }
+    };
+
+    async function getQuote({ inputMint, outputMint, amount, slippageBps, onlyDirectRoutes }) {
+      // Jupiter Quote API v6
+      // Nota: Jupiter sirve por defecto mainnet. Para devnet, añadimos \"network=devnet\".
+      const url = new URL('https://quote-api.jup.ag/v6/quote');
+      url.searchParams.set('inputMint', inputMint);
+      url.searchParams.set('outputMint', outputMint);
+      url.searchParams.set('amount', String(amount));
+      url.searchParams.set('slippageBps', String(slippageBps));
+      url.searchParams.set('swapMode', 'ExactIn');
+      url.searchParams.set('onlyDirectRoutes', String(onlyDirectRoutes));
+      url.searchParams.set('network', 'devnet'); // clave para devnet
+      
+      const res = await fetch(url.toString(), { headers: { 'accept': 'application/json' } });
+      if (!res.ok) throw new Error(`Quote HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data || !data.data || data.data.length === 0) throw new Error('Sin rutas disponibles en Jupiter (devnet).');
+      return data.data[0];
+    }
+
+    async function buildSwapTx({ quote, userPublicKey, wrapSol, priorityFee }) {
+      // Jupiter Swap API v6 — devuelve transacción base64 para firmar
+      const res = await fetch('https://quote-api.jup.ag/v6/swap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          network: 'devnet',
+          quoteResponse: quote,
+          userPublicKey: userPublicKey.toBase58(),
+          wrapAndUnwrapSol: wrapSol,
+          asLegacyTransaction: false,
+          prioritizationFeeLamports: priorityFee > 0 ? { priorityLevelWithMaxLamports: { maxLamports: Math.floor(priorityFee) } } : undefined,
+        })
+      });
+      if (!res.ok) throw new Error(`Swap HTTP ${res.status}`);
+      const json = await res.json();
+      if (!json.swapTransaction) throw new Error('Respuesta sin swapTransaction');
+      return json.swapTransaction; // base64
+    }
+
+    async function sendSignedTx(base64Tx) {
+      const rawTx = Uint8Array.from(atob(base64Tx), c => c.charCodeAt(0));
+      // Firma con Phantom
+      const signed = await provider.signAndSendTransaction({ serializedTransaction: rawTx });
+      return signed?.signature;
+    }
+
+    $('btnSwap').onclick = async () => {
+      try {
+        if (!provider || !owner) { log('Conecta Phantom primero.', 'err'); return; }
+        const endpoint = $('endpoint').value.trim() || clusterApiUrl('devnet');
+        const conn = new Connection(endpoint, 'confirmed');
+
+        const outputMint = $('outputMint').value.trim();
+        if (!outputMint) { log('Introduce el mint de tu token.', 'err'); return; }
+        const amountSol = parseFloat($('amountSol').value || '0');
+        if (!(amountSol > 0)) { log('Cantidad SOL debe ser > 0', 'err'); return; }
+        const slippageBps = parseInt($('slippage').value || '50', 10);
+        const onlyDirectRoutes = ($('onlyDirect').value === 'true');
+        const wrapSol = ($('wrapSol').value === 'true');
+        const priority = parseInt($('priority').value || '0', 10);
+
+        // convertir SOL → lamports → wSOL mint
+        const LAMPORTS_PER_SOL = 1_000_000_000;
+        const amountLamports = Math.floor(amountSol * LAMPORTS_PER_SOL);
+        const WSOL = 'So11111111111111111111111111111111111111112';
+
+        log('Buscando ruta en Jupiter (devnet)...');
+        const quote = await getQuote({
+          inputMint: WSOL,
+          outputMint,
+          amount: amountLamports,
+          slippageBps,
+          onlyDirectRoutes,
+        });
+        log({ quote });
+
+        log('Construyendo transacción de swap...');
+        const swapB64 = await buildSwapTx({ quote, userPublicKey: owner, wrapSol, priorityFee: priority });
+
+        log('Firmando y enviando con Phantom...');
+        const sig = await sendSignedTx(swapB64);
+        log(`Enviada: ${sig}`, 'ok');
+        log(`Explorer (devnet): https://explorer.solana.com/tx/${sig}?cluster=devnet`);
+      } catch (e) {
+        log(`Error swap: ${e.message || e}`, 'err');
+      }
+    };
+
+    // Fallback: mint a la wallet usando spl-token program (simplementemente construimos instrucción de MintTo)
+    // Para esto necesitas ser el mint authority en Devnet. Si no lo eres, no funcionará.
+    $('btnMint').onclick = async () => {
+      try {
+        if (!provider || !owner) { log('Conecta Phantom primero.', 'err'); return; }
+        const mintStr = $('outputMint').value.trim();
+        if (!mintStr) { log('Introduce el mint de tu token.', 'err'); return; }
+        const amountSol = parseFloat($('amountSol').value || '0.01');
+
+        log('⚠️ Mint fallback: esto requiere ser MINT AUTHORITY de ese token en Devnet.');
+        log('Para una app real, usa solo el swap.');
+
+        // Aquí solo informamos, porque en frontend no tenemos la clave del mint authority (por seguridad).
+        log('Sugerencia: usa en tu backend una ruta protegida que firme MintTo y envíe tokens de test a la wallet.');
+      } catch (e) {
+        log(`Error mint fallback: ${e.message || e}`, 'err');
+      }
+    };
+  </script>
+</body>
+</html>

@@ -1,137 +1,137 @@
-<!DOCTYPE html>
-<html lang="es">
+<!doctype html>
+<html>
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width" />
-  <title>Comprar token (Devnet) - Meteora DBC</title>
+  <title>Compra DBC (Devnet)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body{font-family:system-ui;background:#0b1220;color:#e6eaf2;margin:0}
-    .wrap{max-width:760px;margin:40px auto;padding:20px}
-    .card{background:#121a2a;border:1px solid #22304f;border-radius:16px;padding:18px}
-    label{font-size:12px;opacity:.85}
-    input,button{width:100%;padding:12px;border-radius:12px;border:1px solid #2a3a60;background:#0d1424;color:#e6eaf2}
-    button{cursor:pointer;font-weight:600}
-    .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-    .log{white-space:pre-wrap;background:#0a0f1d;border:1px dashed #334269;border-radius:12px;padding:12px;max-height:260px;overflow:auto;margin-top:10px}
-    .btn{background:linear-gradient(180deg,#8b5cf6,#7c3aed);border:none}
-    .btn-outline{background:transparent;border:1px solid #2a3a60}
-    .muted{color:#93a1c4;font-size:12px}
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; max-width: 720px }
+    input, button { padding: 10px; font-size: 16px; margin: 6px 0; width: 100% }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
+    .muted { color: #666; font-size: 14px }
+    .ok { color: #0a7 }
+    .err { color: #c33 }
+    code { background: #f3f3f3; padding: 2px 4px; border-radius: 4px }
   </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="card">
-    <h2>Compra inicial — Meteora DBC (Devnet)</h2>
-    <p class="muted">Conecta Phantom (Devnet), pega <b>Pool</b> o <b>Base Mint</b>, elige SOL a gastar y firma.</p>
+  <h1>Compra de token (Meteora DBC · Devnet)</h1>
 
-    <div class="row">
-      <div>
-        <label>Pool (PDA del pool) — recomendado</label>
-        <input id="pool" placeholder="Ej: 2XqVVB2ggRSvBVgffAGx8jhq7ND11HMVZYk1j5CCPQi5"/>
-      </div>
-      <div>
-        <label>Base Mint (tu token) — alternativo</label>
-        <input id="baseMint" placeholder="Ej: Cuddt93GxBji8fnHDRY57KhyhUK8qjzncSDcLtDsMW9K"/>
-      </div>
+  <p class="muted">Conecta Phantom en Devnet y compra el token de tu pool DBC.</p>
+
+  <button id="connect">Conectar Phantom</button>
+  <div id="wallet" class="muted"></div>
+
+  <h3>Datos de compra</h3>
+  <div class="row">
+    <div>
+      <label>Pool (PDA)</label>
+      <input id="pool" placeholder="Opcional si pones baseMint" />
     </div>
-
-    <div class="row" style="margin-top:12px">
-      <div>
-        <label>Amount SOL (ExactIn)</label>
-        <input id="amountSol" type="number" min="0" step="0.000001" value="0.05"/>
-      </div>
-      <div>
-        <label>Backend URL</label>
-        <input id="api" value="https://comprartokendevnetbackend-production.up.railway.app"/>
-      </div>
+    <div>
+      <label>baseMint (SOL→TOKEN)</label>
+      <input id="baseMint" placeholder="Opcional si pones pool" />
     </div>
-
-    <div style="display:flex;gap:10px;margin:14px 0">
-      <button id="btnConnect" class="btn-outline">Conectar Phantom</button>
-      <button id="btnBuy" class="btn">Comprar</button>
-    </div>
-
-    <div class="muted">Estado</div>
-    <div id="log" class="log"></div>
   </div>
-</div>
 
-<script type="module">
-  const $ = id => document.getElementById(id);
-  const log = (m) => { const l=$('log'); l.textContent += (typeof m==='string'? m : JSON.stringify(m,null,2)) + "\n"; l.scrollTop = l.scrollHeight; };
+  <label>Monto en SOL</label>
+  <input id="amountSol" type="number" step="0.0001" placeholder="0.05" />
 
-  // Phantom
-  const getProvider = () => (window?.solana?.isPhantom ? window.solana : null);
-  let provider = null, owner = null;
+  <div class="row">
+    <button id="quoteBtn">Ver Quote</button>
+    <button id="buyBtn">Comprar</button>
+  </div>
 
-  $('btnConnect').onclick = async () => {
-    try {
-      provider = getProvider();
-      if (!provider) return log("Phantom no detectado. Instálalo y recarga.");
-      const r = await provider.connect();
-      owner = r.publicKey;
-      log("Conectado: " + owner.toBase58());
-    } catch(e){ log("Error conectando: " + (e.message||e)); }
-  };
+  <div id="log"></div>
 
-  function b64ToUint8Array(b64) {
-    const bin = atob(b64);
-    const len = bin.length;
-    const bytes = new Uint8Array(len);
-    for (let i=0;i<len;i++) bytes[i] = bin.charCodeAt(i);
-    return bytes;
-  }
+  <script type="module">
+    import { Connection, VersionedTransaction } from "https://esm.sh/@solana/web3.js@1.95.3"
+    const BACKEND = location.origin // ajusta si tu backend está en otro host
+    const conn = new Connection('https://api.devnet.solana.com', 'confirmed')
 
-  $('btnBuy').onclick = async () => {
-    try {
-      if (!provider || !owner) return log("Conecta Phantom primero.");
-      const api = $('api').value.trim();
-      const pool = $('pool').value.trim();
-      const baseMint = $('baseMint').value.trim();
-      const amountSol = parseFloat(($('amountSol').value||"0"));
+    const $ = (id) => document.getElementById(id)
+    const log = (msg, cls='muted') => { const d = document.createElement('div'); d.className=cls; d.textContent = msg; $('log').prepend(d) }
 
-      if (!pool && !baseMint) return log("Debes enviar Pool o Base Mint.");
-      if (!(amountSol > 0)) return log("Amount SOL debe ser > 0.");
+    let wallet = null
 
-      log("Construyendo compra inicial en backend...");
-      const res = await fetch(`${api}/build-initial-buy`, {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({
-          pool: pool || undefined,
-          baseMint: baseMint || undefined,
-          buyer: owner.toBase58(),
-          amountSol
-        })
-      });
-
-      if (res.status === 409) {
-        const j = await res.json().catch(()=>null);
-        if (j?.code === "INDEXING") {
-          return log("Pool aún indexando o no legible. Reintenta en unos segundos.");
-        }
-        return log("409 Conflict: " + (j?.error || "conflict"));
+    $('connect').onclick = async () => {
+      try {
+        const provider = window.solana
+        if (!provider?.isPhantom) { log('Phantom no detectado', 'err'); return }
+        const r = await provider.connect()
+        wallet = r.publicKey.toString()
+        $('wallet').textContent = `Conectado: ${wallet}`
+        log('Wallet conectada', 'ok')
+      } catch (e) {
+        log('Error conectando Phantom: ' + (e?.message || e), 'err')
       }
-
-      if (!res.ok) {
-        const t = await res.text();
-        return log("Error backend: " + t);
-      }
-
-      const { transaction, pool: poolUsed } = await res.json();
-      if (!transaction) return log("Backend no devolvió 'transaction'.");
-
-      log("Firmando y enviando con Phantom...");
-      const serialized = b64ToUint8Array(transaction);
-      const sigRes = await provider.signAndSendTransaction({ serializedTransaction: serialized });
-      const sig = sigRes?.signature || sigRes;
-      log("Tx enviada: " + sig);
-      log(`Explorer: https://explorer.solana.com/tx/${sig}?cluster=devnet`);
-      if (poolUsed) log("Pool usado: " + poolUsed);
-    } catch(e){
-      log("Error al comprar: " + (e.message || e));
     }
-  };
-</script>
+
+    $('quoteBtn').onclick = async () => {
+      try {
+        const pool = $('pool').value.trim()
+        const baseMint = $('baseMint').value.trim()
+        const amountSol = $('amountSol').value.trim()
+        if (!amountSol) return log('amountSol requerido', 'err')
+        if (!pool && !baseMint) return log('pool o baseMint requerido', 'err')
+
+        const qs = new URLSearchParams({ amountSol })
+        if (pool) qs.set('pool', pool)
+        if (baseMint) qs.set('baseMint', baseMint)
+
+        const r = await fetch(`${BACKEND}/quote?${qs.toString()}`)
+        const j = await r.json()
+        if (!r.ok) throw new Error(j?.error || 'Quote falló')
+        log(`Quote OK · minOut=${j.minimumAmountOut}`, 'ok')
+      } catch (e) {
+        log('Quote error: ' + (e?.message || e), 'err')
+      }
+    }
+
+    $('buyBtn').onclick = async () => {
+      try {
+        if (!wallet) return log('Conecta Phantom primero', 'err')
+        const provider = window.solana
+
+        const pool = $('pool').value.trim()
+        const baseMint = $('baseMint').value.trim()
+        const amountSol = $('amountSol').value.trim()
+        if (!amountSol) return log('amountSol requerido', 'err')
+        if (!pool && !baseMint) return log('pool o baseMint requerido', 'err')
+
+        const body = { buyer: wallet, amountSol }
+        if (pool) body.pool = pool
+        if (baseMint) body.baseMint = baseMint
+
+        const r = await fetch(`${BACKEND}/build-initial-buy`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const j = await r.json()
+        if (!r.ok) throw new Error(j?.error || 'Construcción falló')
+
+        // Deserializar base64 a VersionedTransaction, firmar y enviar con Phantom
+        const txBytes = Uint8Array.from(atob(j.transaction), c => c.charCodeAt(0))
+        const tx = VersionedTransaction.deserialize(txBytes)
+
+        // Phantom v1: signAndSendTransaction acepta Transaction/VersionedTransaction
+        const sigResp = await provider.signAndSendTransaction(tx)
+        const signature = sigResp.signature || sigResp
+
+        log('Enviada. signature: ' + signature, 'ok')
+
+        // Esperar confirmación
+        const conf = await conn.confirmTransaction(signature, 'confirmed')
+        if (conf?.value?.err) {
+          log('Confirmación con error: ' + JSON.stringify(conf.value.err), 'err')
+        } else {
+          log('Confirmada ✅ ' + signature, 'ok')
+        }
+      } catch (e) {
+        log('Compra error: ' + (e?.message || e), 'err')
+      }
+    }
+  </script>
 </body>
 </html>

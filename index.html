@@ -1,55 +1,120 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <title>Compra Token (Devnet)</title>
+  <meta charset="utf-8" />
+  <title>Swap DBC Devnet</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; max-width: 760px }
+    input, button { padding: 10px; font-size: 16px; margin: 6px 0; width: 100% }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
+    .muted { color: #666; font-size: 14px }
+    .ok { color: #0a7 }
+    .err { color: #c33 }
+    pre { background: #f6f6f6; padding: 12px; border-radius: 8px; overflow: auto }
+  </style>
 </head>
 <body>
+  <h1>Swap SOL → TOKEN (Meteora DBC · Devnet)</h1>
+  <p class="muted">Pon la <b>pool</b> o el <b>baseMint</b>. Conecta Phantom en <b>Devnet</b>.</p>
+
   <button id="connect">Conectar Phantom</button>
-  <p id="wallet"></p>
+  <div id="wallet" class="muted"></div>
 
-  <input id="pool" placeholder="Pool PDA">
-  <input id="baseMint" placeholder="Base Mint">
-  <input id="amountSol" placeholder="Monto en SOL">
+  <h3>Datos</h3>
+  <div class="row">
+    <div>
+      <label>Pool (PDA)</label>
+      <input id="pool" placeholder="Opcional si pones baseMint" />
+    </div>
+    <div>
+      <label>baseMint (SOL→TOKEN)</label>
+      <input id="baseMint" placeholder="Opcional si pones pool" />
+    </div>
+  </div>
 
-  <button id="buy">Comprar</button>
+  <label>Monto en SOL</label>
+  <input id="amountSol" type="number" step="0.0001" placeholder="0.05" />
+
+  <div class="row">
+    <button id="quoteBtn">Ver Quote</button>
+    <button id="buyBtn">Comprar</button>
+  </div>
 
   <pre id="log"></pre>
 
   <script type="module">
-    import { Connection, VersionedTransaction } from "https://esm.sh/@solana/web3.js@1.95.3"
-    const BACKEND = "https://comprartokendevnetbackend-production.up.railway.app"  // ajusta a tu backend
+    import { Connection, Transaction, VersionedTransaction, clusterApiUrl } from "https://esm.sh/@solana/web3.js@1.95.3"
+
+    const BACKEND = "https://comprartokendevnetbackend-production.up.railway.app" // cambia si tu backend está en otro host/puerto
+    const conn = new Connection("https://api.devnet.solana.com", "confirmed")
+    const $ = (id) => document.getElementById(id)
+    const log = (msg, cls='muted') => { const d = document.createElement('div'); d.className=cls; d.textContent = msg; $('log').prepend(d) }
 
     let wallet = null
-    const conn = new Connection("https://api.devnet.solana.com", "confirmed")
+    let provider = null
 
-    document.getElementById("connect").onclick = async () => {
-      const provider = window.solana
+    $('connect').onclick = async () => {
+      provider = window.solana
+      if (!provider?.isPhantom) {
+        log('Phantom no detectado', 'err'); return
+      }
       const r = await provider.connect()
       wallet = r.publicKey.toString()
-      document.getElementById("wallet").textContent = "Wallet: " + wallet
+      $('wallet').textContent = `Conectado: ${wallet}`
+      // Fuerza Devnet en la extensión (si no, avisa)
+      try {
+        await provider.request({ method: 'wallet_switchSolanaNetwork', params: { network: 'devnet' } })
+      } catch {}
+      log('Wallet conectada', 'ok')
     }
 
-    document.getElementById("buy").onclick = async () => {
-      const pool = document.getElementById("pool").value
-      const baseMint = document.getElementById("baseMint").value
-      const amountSol = document.getElementById("amountSol").value
-      const body = { buyer: wallet, amountSol }
-      if (pool) body.pool = pool
-      if (baseMint) body.baseMint = baseMint
+    $('quoteBtn').onclick = async () => {
+      const pool = $('pool').value.trim()
+      const baseMint = $('baseMint').value.trim()
+      const amountSol = $('amountSol').value.trim()
+      if (!amountSol) return log('amountSol requerido', 'err')
+      if (!pool && !baseMint) return log('pool o baseMint requerido', 'err')
 
-      const r = await fetch(`${BACKEND}/build-initial-buy`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      })
+      const qs = new URLSearchParams({ amountSol })
+      if (pool) qs.set('pool', pool)
+      if (baseMint) qs.set('baseMint', baseMint)
+
+      const r = await fetch(`${BACKEND}/quote?${qs.toString()}`)
       const j = await r.json()
-      const txBytes = Uint8Array.from(atob(j.transaction), c => c.charCodeAt(0))
-      const tx = VersionedTransaction.deserialize(txBytes)
-
-      const sig = await window.solana.signAndSendTransaction(tx)
-      document.getElementById("log").textContent = "Tx enviada: " + JSON.stringify(sig)
+      if (!r.ok) return log('Quote error: ' + (j?.error || 'falló'), 'err')
+      log(`Quote OK · amountIn=${j.amountInLamports} · minOut=${j.minimumAmountOut}`, 'ok')
     }
-  </script>
-</body>
-</html>
+
+    $('buyBtn').onclick = async () => {
+      try {
+        if (!provider || !wallet) return log('Conecta Phantom primero', 'err')
+        const pool = $('pool').value.trim()
+        const baseMint = $('baseMint').value.trim()
+        const amountSol = $('amountSol').value.trim()
+        if (!amountSol) return log('amountSol requerido', 'err')
+        if (!pool && !baseMint) return log('pool o baseMint requerido', 'err')
+
+        const body = { buyer: wallet, amountSol }
+        if (pool) body.pool = pool
+        if (baseMint) body.baseMint = baseMint
+
+        const r = await fetch(`${BACKEND}/build-initial-buy`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const j = await r.json()
+        if (!r.ok) throw new Error(j?.error || 'Construcción falló')
+
+        const raw = Uint8Array.from(atob(j.transaction), c => c.charCodeAt(0))
+
+        // Deserializa (intenta Versioned y si falla, Legacy)
+        let tx
+        try {
+          tx = VersionedTransaction.deserialize(raw)
+        } catch {
+          tx = Transaction.from(raw)
+        }
+
+        // 1) Intenta firma+envío integrado

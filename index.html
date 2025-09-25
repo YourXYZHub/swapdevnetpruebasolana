@@ -1,191 +1,268 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8" />
-  <title>Swap DBC Devnet</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- Carga IIFE de web3.js (global: solanaWeb3). Evita módulos/ESM. -->
-  <script src="https://unpkg.com/@solana/web3.js@1.95.3/lib/index.iife.min.js"></script>
+  <title>Swap DBC & DAMM</title>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; max-width: 760px }
-    input, button { padding: 10px; font-size: 16px; margin: 6px 0; width: 100% }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
-    .muted { color: #666; font-size: 14px }
-    .ok { color: #0a7 }
-    .err { color: #c33 }
-    pre { background: #f6f6f6; padding: 12px; border-radius: 8px; overflow-x: auto; max-height: 240px }
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .tab { overflow: hidden; border: 1px solid #ccc; background-color: #f1f1f1; }
+    .tab button { background-color: inherit; float: left; border: none; outline: none; cursor: pointer; padding: 14px 16px; transition: 0.3s; }
+    .tab button:hover { background-color: #ddd; }
+    .tab button.active { background-color: #ccc; }
+    .tabcontent { display: none; padding: 6px 12px; border: 1px solid #ccc; border-top: none; }
+    input, button { margin: 5px; padding: 8px; width: 300px; }
+    .log { background: #000; color: #0f0; padding: 10px; height: 200px; overflow-y: scroll; font-family: monospace; }
   </style>
 </head>
 <body>
-  <h1>Swap SOL → TOKEN (Meteora DBC · Devnet)</h1>
-  <p class="muted">Conecta Phantom en <b>Devnet</b>, indica <b>pool</b> o <b>baseMint</b> y un monto en SOL.</p>
+  <h1>Swap DBC & DAMM Devnet</h1>
 
-  <button id="connect">Conectar Phantom</button>
-  <div id="wallet" class="muted"></div>
+  <div class="tab">
+    <button class="tablinks active" onclick="openTab(event, 'DBC')">DBC Swap</button>
+    <button class="tablinks" onclick="openTab(event, 'DAMM')">DAMM Swap</button>
+  </div>
 
-  <h3>Datos</h3>
-  <div class="row">
+  <!-- DBC Tab -->
+  <div id="DBC" class="tabcontent" style="display: block;">
+    <h3>DBC Swap (SOL ↔ TOKEN)</h3>
+    
     <div>
-      <label>Pool (PDA)</label>
-      <input id="pool" placeholder="Opcional si pones baseMint" />
-    </div>
-    <div>
-      <label>baseMint (SOL→TOKEN)</label>
-      <input id="baseMint" placeholder="Opcional si pones pool" />
+      <input type="text" id="dbcPool" placeholder="Pool Address" />
+      <input type="number" id="dbcAmount" placeholder="Amount" step="0.0001" />
+      <select id="dbcAction">
+        <option value="buy">BUY (SOL → TOKEN)</option>
+        <option value="sell">SELL (TOKEN → SOL)</option>
+      </select>
+      <button onclick="dbcSwap()">Execute DBC Swap</button>
     </div>
   </div>
 
-  <label>Monto en SOL</label>
-  <input id="amountSol" type="number" step="0.0001" placeholder="0.05" />
-
-  <div class="row">
-    <button id="quoteBtn">Ver Quote</button>
-    <button id="buyBtn">Comprar</button>
+  <!-- DAMM Tab -->
+  <div id="DAMM" class="tabcontent">
+    <h3>DAMM Swap (Any Token Pair)</h3>
+    
+    <div>
+      <input type="text" id="dammPool" placeholder="Pool Address" />
+      <input type="text" id="inputMint" placeholder="Input Mint" />
+      <input type="text" id="outputMint" placeholder="Output Mint" />
+      <input type="number" id="dammAmount" placeholder="Amount" />
+      <button onclick="dammSwap()">Execute DAMM Swap</button>
+    </div>
   </div>
 
-  <h3>Logs</h3>
-  <pre id="log"></pre>
+  <!-- Common Controls -->
+  <div>
+    <h3>Wallet</h3>
+    <button onclick="connectWallet()">Connect Wallet</button>
+    <div id="walletInfo"></div>
+  </div>
+
+  <h3>Transaction Log</h3>
+  <div id="log" class="log"></div>
 
   <script>
-    // ===== CONFIG =====
-    const BACKEND_URL = "https://comprartokendevnetbackend-production.up.railway.app"; // <-- tu backend
-    const DEVNET_RPC = "https://api.devnet.solana.com";
+    const BACKEND_URL = "https://tu-backend.railway.app";
+    let wallet = null;
+    let connection = null;
 
-    // ===== UTIL =====
-    const $ = (id) => document.getElementById(id);
-    const addLog = (msg, cls='muted') => {
-      const line = document.createElement('div');
-      line.className = cls;
-      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-      const pre = $('log');
-      pre.prepend(line);
-      console.log(msg);
-    };
+    // Utility functions
+    function log(message, type = 'info') {
+      const logDiv = document.getElementById('log');
+      const timestamp = new Date().toLocaleTimeString();
+      const color = type === 'error' ? '#f00' : type === 'success' ? '#0f0' : '#fff';
+      logDiv.innerHTML = `<span style="color: ${color}">[${timestamp}] ${message}</span><br>` + logDiv.innerHTML;
+    }
 
-    // ===== ESTADO =====
-    let provider = null;
-    let walletPubkey = null;
-    let conn = null;
+    function openTab(evt, tabName) {
+      const tabcontent = document.getElementsByClassName("tabcontent");
+      for (let i = 0; i < tabcontent.length; i++) {
+        tabcontent[i].style.display = "none";
+      }
+      const tablinks = document.getElementsByClassName("tablinks");
+      for (let i = 0; i < tablinks.length; i++) {
+        tablinks[i].className = tablinks[i].className.replace(" active", "");
+      }
+      document.getElementById(tabName).style.display = "block";
+      evt.currentTarget.className += " active";
+    }
 
-    // ===== ARRANQUE =====
-    document.addEventListener('DOMContentLoaded', () => {
+    // Wallet connection
+    async function connectWallet() {
       try {
         if (!window.solana || !window.solana.isPhantom) {
-          addLog('Phantom no detectado. Instálalo o habilítalo en esta página.', 'err');
-        } else {
-          provider = window.solana;
-          addLog('Phantom detectado ✅', 'ok');
+          throw new Error('Phantom wallet not found');
         }
-        conn = new solanaWeb3.Connection(DEVNET_RPC, 'confirmed');
-        addLog('Conexión Devnet lista', 'ok');
-      } catch (e) {
-        addLog('Error inicializando: ' + (e.message || e), 'err');
-      }
-    });
 
-    // ===== HANDLERS =====
-    $('connect').onclick = async () => {
+        const provider = window.solana;
+        const response = await provider.connect();
+        wallet = response.publicKey.toString();
+        
+        document.getElementById('walletInfo').innerHTML = `Connected: ${wallet}`;
+        log('Wallet connected successfully', 'success');
+        
+        // Switch to devnet
+        try {
+          await provider.request({ method: 'wallet_switchSolanaNetwork', params: { network: 'devnet' } });
+        } catch (e) {
+          log('Could not switch to devnet: ' + e.message);
+        }
+        
+      } catch (error) {
+        log('Wallet connection failed: ' + error.message, 'error');
+      }
+    }
+
+    // DBC Swap
+    async function dbcSwap() {
+      if (!wallet) {
+        log('Please connect wallet first', 'error');
+        return;
+      }
+
       try {
-        if (!provider) {
-          addLog('Phantom no está disponible', 'err');
+        const pool = document.getElementById('dbcPool').value;
+        const amount = document.getElementById('dbcAmount').value;
+        const action = document.getElementById('dbcAction').value;
+
+        if (!pool || !amount) {
+          log('Please fill all fields', 'error');
           return;
         }
-        // Intentar forzar Devnet si la wallet lo soporta
-        try { await provider.request({ method: 'wallet_switchSolanaNetwork', params: { network: 'devnet' } }); } catch (_) {}
 
-        const resp = await provider.connect({ onlyIfTrusted: false });
-        walletPubkey = (resp.publicKey || provider.publicKey).toString();
-        $('wallet').textContent = `Conectado: ${walletPubkey}`;
-        addLog('Wallet conectada', 'ok');
-      } catch (e) {
-        addLog('Connect cancelado o falló: ' + (e.message || e), 'err');
-      }
-    };
+        log(`Building DBC ${action} transaction...`);
 
-    $('quoteBtn').onclick = async () => {
-      try {
-        const pool = $('pool').value.trim();
-        const baseMint = $('baseMint').value.trim();
-        const amountSol = $('amountSol').value.trim();
-        if (!amountSol) return addLog('amountSol requerido', 'err');
-        if (!pool && !baseMint) return addLog('pool o baseMint requerido', 'err');
-
-        const qs = new URLSearchParams({ amountSol });
-        if (pool) qs.set('pool', pool);
-        if (baseMint) qs.set('baseMint', baseMint);
-
-        addLog('Pidiendo quote…');
-        const r = await fetch(`${BACKEND_URL}/quote?${qs.toString()}`);
-        const j = await r.json();
-        if (!r.ok) throw new Error(j?.error || 'Quote falló');
-        addLog(`Quote OK · amountIn=${j.amountInLamports} · minOut=${j.minimumAmountOut}`, 'ok');
-      } catch (e) {
-        addLog('Quote error: ' + (e.message || e), 'err');
-      }
-    };
-
-    $('buyBtn').onclick = async () => {
-      try {
-        if (!provider || !walletPubkey) return addLog('Conecta Phantom primero', 'err');
-
-        const pool = $('pool').value.trim();
-        const baseMint = $('baseMint').value.trim();
-        const amountSol = $('amountSol').value.trim();
-        if (!amountSol) return addLog('amountSol requerido', 'err');
-        if (!pool && !baseMint) return addLog('pool o baseMint requerido', 'err');
-
-        const body = { buyer: walletPubkey, amountSol };
-        if (pool) body.pool = pool;
-        if (baseMint) body.baseMint = baseMint;
-
-        addLog('Construyendo transacción en backend…');
-        const r = await fetch(`${BACKEND_URL}/build-initial-buy`, {
+        const response = await fetch(`${BACKEND_URL}/dbc/${action}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          body: JSON.stringify({
+            pool,
+            [action === 'buy' ? 'buyer' : 'seller']: wallet,
+            [action === 'buy' ? 'amountSol' : 'amountTokens']: amount
+          })
         });
 
-        const j = await r.json();
-        if (!r.ok) throw new Error(j?.error || 'Construcción falló');
-
-        const raw = Uint8Array.from(atob(j.transaction), c => c.charCodeAt(0));
-
-        // Deserializa como Versioned, si falla prueba Legacy
-        let tx;
-        try {
-          tx = solanaWeb3.VersionedTransaction.deserialize(raw);
-          addLog('TX versioned deserializada', 'ok');
-        } catch {
-          tx = solanaWeb3.Transaction.from(raw);
-          addLog('TX legacy deserializada', 'ok');
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error || 'Transaction build failed');
         }
 
-        // 1) Intento directo con signAndSendTransaction
-        try {
-          const sigResp = await provider.signAndSendTransaction(tx);
-          const signature = sigResp.signature || sigResp;
-          addLog('Tx enviada: ' + signature, 'ok');
-          const conf = await conn.confirmTransaction(signature, 'confirmed');
-          if (conf?.value?.err) addLog('Confirmación con error: ' + JSON.stringify(conf.value.err), 'err');
-          else addLog('Confirmada ✅ ' + signature, 'ok');
-          return;
-        } catch (e1) {
-          addLog('signAndSendTransaction falló, uso fallback: ' + (e1.message || e1), 'muted');
-        }
+        log('Transaction built, signing...');
 
-        // 2) Fallback: firmar y enviar manualmente
-        const signed = await provider.signTransaction(tx);
-        const rawSigned = signed.serialize ? signed.serialize() : signed;
-        const sig = await conn.sendRawTransaction(rawSigned, { skipPreflight: false });
-        addLog('Tx enviada (fallback): ' + sig, 'ok');
-        const conf2 = await conn.confirmTransaction(sig, 'confirmed');
-        if (conf2?.value?.err) addLog('Confirmación con error: ' + JSON.stringify(conf2.value.err), 'err');
-        else addLog('Confirmada ✅ ' + sig, 'ok');
+        // Send transaction
+        await sendTransaction(data.transaction);
 
-      } catch (e) {
-        addLog('Compra error: ' + (e.message || e), 'err');
+      } catch (error) {
+        log('DBC swap failed: ' + error.message, 'error');
       }
-    };
+    }
+
+    // DAMM Swap
+    async function dammSwap() {
+      if (!wallet) {
+        log('Please connect wallet first', 'error');
+        return;
+      }
+
+      try {
+        const pool = document.getElementById('dammPool').value;
+        const inputMint = document.getElementById('inputMint').value;
+        const outputMint = document.getElementById('outputMint').value;
+        const amount = document.getElementById('dammAmount').value;
+
+        if (!pool || !inputMint || !outputMint || !amount) {
+          log('Please fill all fields', 'error');
+          return;
+        }
+
+        log('Building DAMM swap transaction...');
+
+        const response = await fetch(`${BACKEND_URL}/damm/swap`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            pool,
+            user: wallet,
+            inputMint,
+            outputMint,
+            amount
+          })
+        });
+
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.error || 'Transaction build failed');
+        }
+
+        log('Transaction built, signing...');
+        await sendTransaction(data.transaction);
+
+      } catch (error) {
+        log('DAMM swap failed: ' + error.message, 'error');
+      }
+    }
+
+    // Generic transaction sender
+    async function sendTransaction(transactionBase64) {
+      try {
+        const provider = window.solana;
+        const rawTransaction = Uint8Array.from(atob(transactionBase64), c => c.charCodeAt(0));
+
+        let transaction;
+        try {
+          transaction = solanaWeb3.VersionedTransaction.deserialize(rawTransaction);
+          log('Versioned transaction deserialized');
+        } catch {
+          transaction = solanaWeb3.Transaction.from(rawTransaction);
+          log('Legacy transaction deserialized');
+        }
+
+        // Try signAndSendTransaction first
+        try {
+          const signature = await provider.signAndSendTransaction(transaction);
+          log(`Transaction sent: ${signature}`, 'success');
+          await confirmTransaction(signature);
+        } catch (error) {
+          log('signAndSend failed, trying fallback: ' + error.message);
+          
+          // Fallback: sign manually
+          const signed = await provider.signTransaction(transaction);
+          const serialized = signed.serialize();
+          const connection = new solanaWeb3.Connection('https://api.devnet.solana.com');
+          const signature = await connection.sendRawTransaction(serialized);
+          log(`Transaction sent (fallback): ${signature}`, 'success');
+          await confirmTransaction(signature);
+        }
+
+      } catch (error) {
+        throw new Error('Transaction failed: ' + error.message);
+      }
+    }
+
+    async function confirmTransaction(signature) {
+      const connection = new solanaWeb3.Connection('https://api.devnet.solana.com');
+      const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+      
+      if (confirmation.value.err) {
+        throw new Error('Transaction confirmation failed');
+      }
+      
+      log(`Transaction confirmed: https://solscan.io/tx/${signature}?cluster=devnet`, 'success');
+    }
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      if (window.solana) {
+        log('Phantom wallet detected');
+        window.solana.on('connect', () => {
+          wallet = window.solana.publicKey.toString();
+          document.getElementById('walletInfo').innerHTML = `Connected: ${wallet}`;
+        });
+      } else {
+        log('Phantom wallet not found', 'error');
+      }
+    });
   </script>
+  <script src="https://unpkg.com/@solana/web3.js@1.95.3/lib/index.iife.min.js"></script>
 </body>
 </html>

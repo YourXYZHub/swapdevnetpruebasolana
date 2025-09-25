@@ -2,93 +2,60 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Swap DBC Devnet</title>
+  <title>Trade DBC Devnet</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- web3.js IIFE para evitar CSP/CORS -->
   <script src="https://unpkg.com/@solana/web3.js@1.95.3/lib/index.iife.min.js"></script>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; max-width: 760px }
-    input, button, select { padding: 10px; font-size: 16px; margin: 6px 0; width: 100% }
+    input, button { padding: 10px; font-size: 16px; margin: 6px 0; width: 100% }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
     .muted { color: #666; font-size: 14px }
     .ok { color: #0a7 }
     .err { color: #c33 }
-    pre { background: #f6f6f6; padding: 12px; border-radius: 8px; overflow-x: auto; max-height: 240px }
-    .tab { display: flex; gap: 10px; margin: 20px 0; }
-    .tab button { flex: 1; padding: 10px; border: 1px solid #ccc; background: white; cursor: pointer; }
-    .tab button.active { background: #007cba; color: white; }
-    .tabcontent { display: none; }
-    .tabcontent.active { display: block; }
+    pre { background: #f6f6f6; padding: 12px; border-radius: 8px; overflow-x: auto; max-height: 260px }
+    small { color:#555 }
   </style>
 </head>
 <body>
-  <h1>Swap SOL → TOKEN (Meteora DBC · Devnet)</h1>
-  <p class="muted">Conecta Phantom en <b>Devnet</b>, indica <b>pool</b> o <b>baseMint</b> y un monto en SOL.</p>
+  <h1>Trade SOL ↔ TOKEN (Meteora DBC · Devnet)</h1>
+  <p class="muted">Introduce <b>Pool</b> o <b>baseMint</b>. Conecta Phantom en <b>Devnet</b>.</p>
 
   <button id="connect">Conectar Phantom</button>
   <div id="wallet" class="muted"></div>
 
-  <div class="tab">
-    <button class="tab-btn active" data-tab="buy">Comprar Tokens</button>
-    <button class="tab-btn" data-tab="sell">Vender Tokens</button>
-    <button class="tab-btn" data-tab="tools">Herramientas</button>
-  </div>
-
-  <!-- TAB COMPRAR -->
-  <div id="buy" class="tabcontent active">
-    <h3>Comprar Tokens (SOL → TOKEN)</h3>
-    
-    <div class="row">
-      <div>
-        <label>Pool (PDA)</label>
-        <input id="pool" placeholder="Opcional si pones baseMint" />
-      </div>
-      <div>
-        <label>baseMint (SOL→TOKEN)</label>
-        <input id="baseMint" placeholder="Opcional si pones pool" />
-      </div>
+  <h3>Parámetros</h3>
+  <div class="row">
+    <div>
+      <label>Pool (PDA)</label>
+      <input id="pool" placeholder="Opcional si pones baseMint" />
     </div>
-
-    <label>Monto en SOL</label>
-    <input id="amountSol" type="number" step="0.0001" placeholder="0.05" />
-
-    <div class="row">
-      <button id="quoteBtn">Ver Quote</button>
-      <button id="buyBtn">Comprar Tokens</button>
+    <div>
+      <label>baseMint (SOL→TOKEN)</label>
+      <input id="baseMint" placeholder="Opcional si pones pool" />
     </div>
   </div>
 
-  <!-- TAB VENDER -->
-  <div id="sell" class="tabcontent">
-    <h3>Vender Tokens (TOKEN → SOL)</h3>
-    
-    <div class="row">
-      <div>
-        <label>Pool (PDA)</label>
-        <input id="sellPool" placeholder="Opcional si pones quoteMint" />
-      </div>
-      <div>
-        <label>quoteMint (TOKEN→SOL)</label>
-        <input id="quoteMint" placeholder="Opcional si pones pool" />
-      </div>
+  <div class="row">
+    <div>
+      <label>Monto en SOL (comprar)</label>
+      <input id="amountSol" type="number" step="0.0001" placeholder="0.05" />
     </div>
-
-    <label>Monto en Tokens</label>
-    <input id="amountTokens" type="number" step="0.0001" placeholder="100" />
-
-    <div class="row">
-      <button id="sellQuoteBtn">Ver Quote Venta</button>
-      <button id="sellBtn">Vender Tokens</button>
+    <div>
+      <label>Cant. TOKEN (vender, mínima unidad)</label>
+      <input id="amountTokens" type="number" step="1" placeholder="100000" />
+      <small>Ojo: en unidades mínimas (ten en cuenta los decimals del token).</small>
     </div>
   </div>
 
-  <!-- TAB HERRAMIENTAS -->
-  <div id="tools" class="tabcontent">
-    <h3>Herramientas</h3>
-    
-    <button id="findPoolsBtn">Buscar Pools Activos</button>
-    <button id="healthBtn">Verificar Salud Backend</button>
-    
-    <div id="toolsResult" style="margin-top: 20px;"></div>
+  <div class="row">
+    <button id="checkBtn">Comprobar estado</button>
+    <button id="quoteBtn">Quote compra</button>
+  </div>
+
+  <div class="row">
+    <button id="buyBtn">Comprar (SOL→TOKEN)</button>
+    <button id="sellBtn">Vender (TOKEN→SOL)</button>
   </div>
 
   <h3>Logs</h3>
@@ -96,265 +63,155 @@
 
   <script>
     // ===== CONFIG =====
-    const BACKEND_URL = "https://comprartokendevnetbackend-production.up.railway.app";
+    const BACKEND_URL = "https://comprartokendevnetbackend-production.up.railway.app"; // tu backend
     const DEVNET_RPC = "https://api.devnet.solana.com";
 
-    // ===== UTIL =====
-    const $ = (id) => document.getElementById(id);
-    const addLog = (msg, cls='muted') => {
-      const line = document.createElement('div');
-      line.className = cls;
-      line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-      const pre = $('log');
-      pre.prepend(line);
-      console.log(msg);
-    };
+    const $ = (id) => document.getElementById(id)
+    const addLog = (msg, cls='muted') => { const l=document.createElement('div'); l.className=cls; l.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`; $('log').prepend(l); console.log(msg) }
 
-    // ===== ESTADO =====
-    let provider = null;
-    let walletPubkey = null;
-    let conn = null;
+    let provider=null, walletPubkey=null, conn=null
 
-    // ===== TABS =====
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.tabcontent').forEach(c => c.classList.remove('active'));
-        
-        btn.classList.add('active');
-        $(btn.dataset.tab).classList.add('active');
-      });
-    });
-
-    // ===== ARRANQUE =====
     document.addEventListener('DOMContentLoaded', () => {
-      try {
-        if (!window.solana || !window.solana.isPhantom) {
-          addLog('Phantom no detectado. Instálalo o habilítalo en esta página.', 'err');
-        } else {
-          provider = window.solana;
-          addLog('Phantom detectado ✅', 'ok');
-        }
-        conn = new solanaWeb3.Connection(DEVNET_RPC, 'confirmed');
-        addLog('Conexión Devnet lista', 'ok');
-      } catch (e) {
-        addLog('Error inicializando: ' + (e.message || e), 'err');
-      }
-    });
+      if (!window.solana || !window.solana.isPhantom) addLog('Phantom no detectado', 'err'); else { provider=window.solana; addLog('Phantom detectado ✅','ok') }
+      conn = new solanaWeb3.Connection(DEVNET_RPC, 'confirmed'); addLog('Conexión Devnet lista', 'ok')
+    })
 
-    // ===== WALLET =====
     $('connect').onclick = async () => {
       try {
-        if (!provider) {
-          addLog('Phantom no está disponible', 'err');
-          return;
-        }
-        
-        try { 
-          await provider.request({ method: 'wallet_switchSolanaNetwork', params: { network: 'devnet' } }); 
-        } catch (_) {}
+        if (!provider) return addLog('Phantom no está disponible', 'err')
+        try { await provider.request({ method: 'wallet_switchSolanaNetwork', params: { network: 'devnet' } }) } catch {}
+        const r = await provider.connect({ onlyIfTrusted:false })
+        walletPubkey = (r.publicKey || provider.publicKey).toString()
+        $('wallet').textContent = `Conectado: ${walletPubkey}`
+        addLog('Wallet conectada', 'ok')
+      } catch (e) { addLog('Connect cancelado: ' + (e.message || e), 'err') }
+    }
 
-        const resp = await provider.connect({ onlyIfTrusted: false });
-        walletPubkey = (resp.publicKey || provider.publicKey).toString();
-        $('wallet').textContent = `Conectado: ${walletPubkey}`;
-        addLog('Wallet conectada', 'ok');
-      } catch (e) {
-        addLog('Connect cancelado o falló: ' + (e.message || e), 'err');
-      }
-    };
+    async function resolvePoolOrThrow() {
+      const pool = $('pool').value.trim()
+      const baseMint = $('baseMint').value.trim()
+      if (!pool && !baseMint) throw new Error('pool o baseMint requerido')
+      const qs = new URLSearchParams({})
+      if (pool) qs.set('pool', pool)
+      if (baseMint) qs.set('baseMint', baseMint)
+      const r = await fetch(`${BACKEND_URL}/resolve-pool?${qs.toString()}`)
+      const j = await r.json()
+      if (!r.ok) throw new Error(j?.error || 'resolve-pool falló')
+      if (!$('pool').value && j.pool) $('pool').value = j.pool
+      return j
+    }
 
-    // ===== COMPRAR =====
+    $('checkBtn').onclick = async () => {
+      try {
+        const pool = $('pool').value.trim()
+        const baseMint = $('baseMint').value.trim()
+        if (!pool && !baseMint) return addLog('pool o baseMint requerido', 'err')
+
+        const qs = new URLSearchParams({ probeSol: '0.01' })
+        if (pool) qs.set('pool', pool)
+        if (baseMint) qs.set('baseMint', baseMint)
+
+        const r = await fetch(`${BACKEND_URL}/pool-status?${qs.toString()}`)
+        const j = await r.json()
+        if (!r.ok) throw new Error(j?.error || 'pool-status falló')
+        addLog(`Estado: pool=${j.pool} · completed=${j.isCompleted} · canBuy=${j.canBuy} · canSell=${j.canSell}`, j.isCompleted ? 'err' : 'ok')
+      } catch (e) { addLog('Estado error: ' + (e.message || e), 'err') }
+    }
+
     $('quoteBtn').onclick = async () => {
       try {
-        const pool = $('pool').value.trim();
-        const baseMint = $('baseMint').value.trim();
-        const amountSol = $('amountSol').value.trim();
-        if (!amountSol) return addLog('amountSol requerido', 'err');
-        if (!pool && !baseMint) return addLog('pool o baseMint requerido', 'err');
+        const amountSol = $('amountSol').value.trim()
+        if (!amountSol) return addLog('amountSol requerido', 'err')
+        await resolvePoolOrThrow()
+        const pool = $('pool').value.trim()
+        const baseMint = $('baseMint').value.trim()
 
-        const qs = new URLSearchParams({ amountSol });
-        if (pool) qs.set('pool', pool);
-        if (baseMint) qs.set('baseMint', baseMint);
+        const qs = new URLSearchParams({ amountSol })
+        if (pool) qs.set('pool', pool)
+        if (baseMint) qs.set('baseMint', baseMint)
 
-        addLog('Pidiendo quote compra...');
-        const r = await fetch(`${BACKEND_URL}/quote?${qs.toString()}`);
-        const j = await r.json();
-        if (!r.ok) throw new Error(j?.error || 'Quote falló');
-        addLog(`Quote OK · SOL: ${amountSol} → Min tokens: ${j.minimumAmountOut}`, 'ok');
-      } catch (e) {
-        addLog('Quote error: ' + (e.message || e), 'err');
+        const r = await fetch(`${BACKEND_URL}/quote?${qs.toString()}`)
+        const j = await r.json()
+        if (!r.ok) {
+          if (j?.code === 'POOL_COMPLETED') addLog('El pool está COMPLETED: no admite compras SOL→TOKEN', 'err')
+          else addLog('Quote error: ' + (j?.error || 'falló'), 'err')
+          return
+        }
+        addLog(`Quote OK · in=${j.amountInLamports} · minOut=${j.minimumAmountOut}`, 'ok')
+      } catch (e) { addLog('Quote error: ' + (e.message || e), 'err') }
+    }
+
+    async function signSend(rawB64) {
+      const raw = Uint8Array.from(atob(rawB64), c => c.charCodeAt(0))
+      let tx
+      try { tx = solanaWeb3.VersionedTransaction.deserialize(raw); addLog('TX versioned deserializada','ok') }
+      catch { tx = solanaWeb3.Transaction.from(raw); addLog('TX legacy deserializada','ok') }
+
+      try {
+        const sigResp = await provider.signAndSendTransaction(tx)
+        const signature = sigResp.signature || sigResp
+        addLog('Tx enviada: ' + signature, 'ok')
+        const conf = await conn.confirmTransaction(signature, 'confirmed')
+        if (conf?.value?.err) addLog('Confirmación con error: ' + JSON.stringify(conf.value.err), 'err')
+        else addLog('Confirmada ✅ ' + signature, 'ok')
+      } catch (e1) {
+        addLog('signAndSendTransaction falló, uso fallback: ' + (e1.message || e1), 'muted')
+        const signed = await provider.signTransaction(tx)
+        const rawSigned = signed.serialize ? signed.serialize() : signed
+        const sig = await conn.sendRawTransaction(rawSigned, { skipPreflight: false })
+        addLog('Tx enviada (fallback): ' + sig, 'ok')
+        const conf2 = await conn.confirmTransaction(sig, 'confirmed')
+        if (conf2?.value?.err) addLog('Confirmación con error: ' + JSON.stringify(conf2.value.err), 'err')
+        else addLog('Confirmada ✅ ' + sig, 'ok')
       }
-    };
+    }
 
     $('buyBtn').onclick = async () => {
       try {
-        if (!provider || !walletPubkey) return addLog('Conecta Phantom primero', 'err');
+        if (!provider || !walletPubkey) return addLog('Conecta Phantom primero','err')
+        await resolvePoolOrThrow()
+        const pool = $('pool').value.trim()
+        const baseMint = $('baseMint').value.trim()
+        const amountSol = $('amountSol').value.trim()
+        if (!amountSol) return addLog('amountSol requerido','err')
 
-        const pool = $('pool').value.trim();
-        const baseMint = $('baseMint').value.trim();
-        const amountSol = $('amountSol').value.trim();
-        if (!amountSol) return addLog('amountSol requerido', 'err');
-        if (!pool && !baseMint) return addLog('pool o baseMint requerido', 'err');
+        const body = { buyer: walletPubkey, amountSol }
+        if (pool) body.pool = pool
+        if (baseMint) body.baseMint = baseMint
 
-        const body = { buyer: walletPubkey, amountSol };
-        if (pool) body.pool = pool;
-        if (baseMint) body.baseMint = baseMint;
-
-        addLog('Construyendo transacción de compra...');
         const r = await fetch(`${BACKEND_URL}/build-initial-buy`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-
-        const j = await r.json();
-        if (!r.ok) throw new Error(j?.error || 'Construcción falló');
-
-        const raw = Uint8Array.from(atob(j.transaction), c => c.charCodeAt(0));
-
-        let tx;
-        try {
-          tx = solanaWeb3.VersionedTransaction.deserialize(raw);
-          addLog('TX versioned deserializada', 'ok');
-        } catch {
-          tx = solanaWeb3.Transaction.from(raw);
-          addLog('TX legacy deserializada', 'ok');
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        })
+        const j = await r.json()
+        if (!r.ok) {
+          if (j?.code === 'POOL_COMPLETED') addLog('No se puede comprar: pool COMPLETED. Usa vender o otra pool.', 'err')
+          else addLog('Construcción falló: ' + (j?.error || 'desconocido'), 'err')
+          return
         }
-
-        // 1) Intento directo
-        try {
-          const sigResp = await provider.signAndSendTransaction(tx);
-          const signature = sigResp.signature || sigResp;
-          addLog('Tx enviada: ' + signature, 'ok');
-          const conf = await conn.confirmTransaction(signature, 'confirmed');
-          if (conf?.value?.err) addLog('Confirmación con error: ' + JSON.stringify(conf.value.err), 'err');
-          else addLog('Confirmada ✅ ' + signature, 'ok');
-          return;
-        } catch (e1) {
-          addLog('signAndSendTransaction falló, uso fallback: ' + (e1.message || e1), 'muted');
-        }
-
-        // 2) Fallback
-        const signed = await provider.signTransaction(tx);
-        const rawSigned = signed.serialize ? signed.serialize() : signed;
-        const sig = await conn.sendRawTransaction(rawSigned, { skipPreflight: false });
-        addLog('Tx enviada (fallback): ' + sig, 'ok');
-        const conf2 = await conn.confirmTransaction(sig, 'confirmed');
-        if (conf2?.value?.err) addLog('Confirmación con error: ' + JSON.stringify(conf2.value.err), 'err');
-        else addLog('Confirmada ✅ ' + sig, 'ok');
-
-      } catch (e) {
-        addLog('Compra error: ' + (e.message || e), 'err');
-      }
-    };
-
-    // ===== VENDER =====
-    $('sellQuoteBtn').onclick = async () => {
-      try {
-        const pool = $('sellPool').value.trim();
-        const quoteMint = $('quoteMint').value.trim();
-        const amountTokens = $('amountTokens').value.trim();
-        if (!amountTokens) return addLog('amountTokens requerido', 'err');
-        if (!pool && !quoteMint) return addLog('pool o quoteMint requerido', 'err');
-
-        addLog('Quote venta no implementado en backend', 'muted');
-      } catch (e) {
-        addLog('Quote venta error: ' + (e.message || e), 'err');
-      }
-    };
+        await signSend(j.transaction)
+      } catch (e) { addLog('Compra error: ' + (e.message || e), 'err') }
+    }
 
     $('sellBtn').onclick = async () => {
       try {
-        if (!provider || !walletPubkey) return addLog('Conecta Phantom primero', 'err');
+        if (!provider || !walletPubkey) return addLog('Conecta Phantom primero','err')
+        await resolvePoolOrThrow()
+        const pool = $('pool').value.trim()
+        const amountTokens = $('amountTokens').value.trim()
+        if (!amountTokens) return addLog('amountTokens requerido','err')
 
-        const pool = $('sellPool').value.trim();
-        const quoteMint = $('quoteMint').value.trim();
-        const amountTokens = $('amountTokens').value.trim();
-        if (!amountTokens) return addLog('amountTokens requerido', 'err');
-        if (!pool && !quoteMint) return addLog('pool o quoteMint requerido', 'err');
+        const body = { seller: walletPubkey, amountTokens }
+        if (pool) body.pool = pool
+        // si no tienes pool, podrías pasar quoteMint (mint del token)
 
-        const body = { seller: walletPubkey, amountTokens };
-        if (pool) body.pool = pool;
-        if (quoteMint) body.quoteMint = quoteMint;
-
-        addLog('Construyendo transacción de venta...');
         const r = await fetch(`${BACKEND_URL}/build-sell`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-
-        const j = await r.json();
-        if (!r.ok) throw new Error(j?.error || 'Construcción falló');
-
-        const raw = Uint8Array.from(atob(j.transaction), c => c.charCodeAt(0));
-
-        let tx;
-        try {
-          tx = solanaWeb3.VersionedTransaction.deserialize(raw);
-          addLog('TX versioned deserializada', 'ok');
-        } catch {
-          tx = solanaWeb3.Transaction.from(raw);
-          addLog('TX legacy deserializada', 'ok');
-        }
-
-        try {
-          const sigResp = await provider.signAndSendTransaction(tx);
-          const signature = sigResp.signature || sigResp;
-          addLog('Tx venta enviada: ' + signature, 'ok');
-          const conf = await conn.confirmTransaction(signature, 'confirmed');
-          if (conf?.value?.err) addLog('Confirmación con error: ' + JSON.stringify(conf.value.err), 'err');
-          else addLog('Venta Confirmada ✅ ' + signature, 'ok');
-        } catch (e1) {
-          addLog('Venta falló: ' + (e1.message || e1), 'err');
-        }
-
-      } catch (e) {
-        addLog('Venta error: ' + (e.message || e), 'err');
-      }
-    };
-
-    // ===== HERRAMIENTAS =====
-    $('findPoolsBtn').onclick = async () => {
-      try {
-        addLog('Buscando pools activos...');
-        const r = await fetch(`${BACKEND_URL}/active-pools`);
-        const j = await r.json();
-        
-        if (!r.ok) throw new Error(j?.error || 'Búsqueda falló');
-        
-        const toolsResult = $('toolsResult');
-        toolsResult.innerHTML = '';
-        
-        if (j.activePools && j.activePools.length > 0) {
-          j.activePools.forEach(pool => {
-            const div = document.createElement('div');
-            div.innerHTML = `<strong>Pool:</strong> ${pool.address}<br>
-                            <strong>Base:</strong> ${pool.baseMint}<br>
-                            <strong>Quote:</strong> ${pool.quoteMint}<br>
-                            <strong>Estado:</strong> ${pool.isCompleted ? 'COMPLETADO' : 'ACTIVO'}<br>`;
-            toolsResult.appendChild(div);
-          });
-          addLog(`Encontrados ${j.activePools.length} pools activos`, 'ok');
-        } else {
-          toolsResult.innerHTML = 'No se encontraron pools activos';
-          addLog('No se encontraron pools activos', 'err');
-        }
-      } catch (e) {
-        addLog('Error buscando pools: ' + e.message, 'err');
-      }
-    };
-
-    $('healthBtn').onclick = async () => {
-      try {
-        const r = await fetch(`${BACKEND_URL}/health`);
-        const j = await r.json();
-        $('toolsResult').innerHTML = `Backend: ${j.ok ? '✅ OK' : '❌ ERROR'}`;
-        addLog(`Health check: ${j.ok ? 'OK' : 'ERROR'}`, j.ok ? 'ok' : 'err');
-      } catch (e) {
-        addLog('Health check error: ' + e.message, 'err');
-      }
-    };
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        })
+        const j = await r.json()
+        if (!r.ok) return addLog('build-sell falló: ' + (j?.error || 'desconocido'), 'err')
+        await signSend(j.transaction)
+      } catch (e) { addLog('Venta error: ' + (e.message || e), 'err') }
+    }
   </script>
 </body>
 </html>

@@ -2,37 +2,47 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Trade DBC Devnet</title>
+  <title>Meteora (Devnet) · DBC & DAMM2</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- web3.js IIFE para evitar CSP/CORS -->
   <script src="https://unpkg.com/@solana/web3.js@1.95.3/lib/index.iife.min.js"></script>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; max-width: 760px }
-    input, button { padding: 10px; font-size: 16px; margin: 6px 0; width: 100% }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; max-width: 860px }
+    input, button, select { padding: 10px; font-size: 16px; margin: 6px 0; width: 100% }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
     .muted { color: #666; font-size: 14px }
     .ok { color: #0a7 }
     .err { color: #c33 }
-    pre { background: #f6f6f6; padding: 12px; border-radius: 8px; overflow-x: auto; max-height: 260px }
+    pre { background: #f6f6f6; padding: 12px; border-radius: 8px; overflow-x: auto; max-height: 300px }
     small { color:#555 }
   </style>
 </head>
 <body>
-  <h1>Trade SOL ↔ TOKEN (Meteora DBC · Devnet)</h1>
-  <p class="muted">Introduce <b>Pool</b> o <b>baseMint</b>. Conecta Phantom en <b>Devnet</b>.</p>
+  <h1>Meteora Devnet · Trade SOL ↔ TOKEN</h1>
+  <p class="muted">Selecciona protocolo y rellena los campos. Conecta Phantom en <b>Devnet</b>.</p>
 
-  <button id="connect">Conectar Phantom</button>
-  <div id="wallet" class="muted"></div>
+  <div class="row">
+    <div>
+      <label>Protocolo</label>
+      <select id="protocol">
+        <option value="dbc">DBC (antes de migrar)</option>
+        <option value="damm2">DAMM2 (después de migrar)</option>
+      </select>
+    </div>
+    <div>
+      <button id="connect">Conectar Phantom</button>
+      <div id="wallet" class="muted"></div>
+    </div>
+  </div>
 
   <h3>Parámetros</h3>
   <div class="row">
     <div>
       <label>Pool (PDA)</label>
-      <input id="pool" placeholder="Opcional si pones baseMint" />
+      <input id="pool" placeholder="Para DAMM2 es requerido" />
     </div>
     <div>
-      <label>baseMint (SOL→TOKEN)</label>
-      <input id="baseMint" placeholder="Opcional si pones pool" />
+      <label>baseMint (solo DBC: SOL→TOKEN)</label>
+      <input id="baseMint" placeholder="Opcional si pones pool (DBC)" />
     </div>
   </div>
 
@@ -42,9 +52,9 @@
       <input id="amountSol" type="number" step="0.0001" placeholder="0.05" />
     </div>
     <div>
-      <label>Cant. TOKEN (vender, mínima unidad)</label>
+      <label>Cant. TOKEN (vender, unidades mínimas)</label>
       <input id="amountTokens" type="number" step="1" placeholder="100000" />
-      <small>Ojo: en unidades mínimas (ten en cuenta los decimals del token).</small>
+      <small>Ojo con los <i>decimals</i> del token.</small>
     </div>
   </div>
 
@@ -63,16 +73,21 @@
 
   <script>
     // ===== CONFIG =====
-    const BACKEND_URL = "https://comprartokendevnetbackend-production.up.railway.app"; // tu backend
+    const BACKEND_URL = "https://TU_BACKEND_AQUI"; // pon tu Railway/URL
     const DEVNET_RPC = "https://api.devnet.solana.com";
+    const WSOL = "So11111111111111111111111111111111111111112"
 
-    const $ = (id) => document.getElementById(id)
-    const addLog = (msg, cls='muted') => { const l=document.createElement('div'); l.className=cls; l.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`; $('log').prepend(l); console.log(msg) }
+    const $ = id => document.getElementById(id)
+    const addLog = (msg, cls='muted') => {
+      const l=document.createElement('div'); l.className=cls; l.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
+      $('log').prepend(l); console.log(msg)
+    }
 
     let provider=null, walletPubkey=null, conn=null
 
     document.addEventListener('DOMContentLoaded', () => {
-      if (!window.solana || !window.solana.isPhantom) addLog('Phantom no detectado', 'err'); else { provider=window.solana; addLog('Phantom detectado ✅','ok') }
+      if (!window.solana || !window.solana.isPhantom) addLog('Phantom no detectado', 'err')
+      else { provider=window.solana; addLog('Phantom detectado ✅','ok') }
       conn = new solanaWeb3.Connection(DEVNET_RPC, 'confirmed'); addLog('Conexión Devnet lista', 'ok')
     })
 
@@ -87,59 +102,7 @@
       } catch (e) { addLog('Connect cancelado: ' + (e.message || e), 'err') }
     }
 
-    async function resolvePoolOrThrow() {
-      const pool = $('pool').value.trim()
-      const baseMint = $('baseMint').value.trim()
-      if (!pool && !baseMint) throw new Error('pool o baseMint requerido')
-      const qs = new URLSearchParams({})
-      if (pool) qs.set('pool', pool)
-      if (baseMint) qs.set('baseMint', baseMint)
-      const r = await fetch(`${BACKEND_URL}/resolve-pool?${qs.toString()}`)
-      const j = await r.json()
-      if (!r.ok) throw new Error(j?.error || 'resolve-pool falló')
-      if (!$('pool').value && j.pool) $('pool').value = j.pool
-      return j
-    }
-
-    $('checkBtn').onclick = async () => {
-      try {
-        const pool = $('pool').value.trim()
-        const baseMint = $('baseMint').value.trim()
-        if (!pool && !baseMint) return addLog('pool o baseMint requerido', 'err')
-
-        const qs = new URLSearchParams({ probeSol: '0.01' })
-        if (pool) qs.set('pool', pool)
-        if (baseMint) qs.set('baseMint', baseMint)
-
-        const r = await fetch(`${BACKEND_URL}/pool-status?${qs.toString()}`)
-        const j = await r.json()
-        if (!r.ok) throw new Error(j?.error || 'pool-status falló')
-        addLog(`Estado: pool=${j.pool} · completed=${j.isCompleted} · canBuy=${j.canBuy} · canSell=${j.canSell}`, j.isCompleted ? 'err' : 'ok')
-      } catch (e) { addLog('Estado error: ' + (e.message || e), 'err') }
-    }
-
-    $('quoteBtn').onclick = async () => {
-      try {
-        const amountSol = $('amountSol').value.trim()
-        if (!amountSol) return addLog('amountSol requerido', 'err')
-        await resolvePoolOrThrow()
-        const pool = $('pool').value.trim()
-        const baseMint = $('baseMint').value.trim()
-
-        const qs = new URLSearchParams({ amountSol })
-        if (pool) qs.set('pool', pool)
-        if (baseMint) qs.set('baseMint', baseMint)
-
-        const r = await fetch(`${BACKEND_URL}/quote?${qs.toString()}`)
-        const j = await r.json()
-        if (!r.ok) {
-          if (j?.code === 'POOL_COMPLETED') addLog('El pool está COMPLETED: no admite compras SOL→TOKEN', 'err')
-          else addLog('Quote error: ' + (j?.error || 'falló'), 'err')
-          return
-        }
-        addLog(`Quote OK · in=${j.amountInLamports} · minOut=${j.minimumAmountOut}`, 'ok')
-      } catch (e) { addLog('Quote error: ' + (e.message || e), 'err') }
-    }
+    function proto() { return $('protocol').value }
 
     async function signSend(rawB64) {
       const raw = Uint8Array.from(atob(rawB64), c => c.charCodeAt(0))
@@ -155,7 +118,7 @@
         if (conf?.value?.err) addLog('Confirmación con error: ' + JSON.stringify(conf.value.err), 'err')
         else addLog('Confirmada ✅ ' + signature, 'ok')
       } catch (e1) {
-        addLog('signAndSendTransaction falló, uso fallback: ' + (e1.message || e1), 'muted')
+        addLog('Fallback signTransaction → sendRaw', 'muted')
         const signed = await provider.signTransaction(tx)
         const rawSigned = signed.serialize ? signed.serialize() : signed
         const sig = await conn.sendRawTransaction(rawSigned, { skipPreflight: false })
@@ -166,50 +129,120 @@
       }
     }
 
+    $('checkBtn').onclick = async () => {
+      try {
+        const pool = $('pool').value.trim()
+        const baseMint = $('baseMint').value.trim()
+        if (proto()==='dbc') {
+          if (!pool && !baseMint) return addLog('DBC: pool o baseMint requerido','err')
+          const qs = new URLSearchParams({})
+          if (pool) qs.set('pool', pool)
+          if (baseMint) qs.set('baseMint', baseMint)
+          const r = await fetch(`${BACKEND_URL}/dbc/resolve?${qs.toString()}`)
+          const j = await r.json()
+          if (!r.ok) throw new Error(j?.error || 'resolve DBC falló')
+          if (!$('pool').value && j.pool) $('pool').value = j.pool
+          addLog(`DBC OK · pool=${j.pool} · completed=${j.isCompleted}`, j.isCompleted?'err':'ok')
+        } else {
+          if (!pool) return addLog('DAMM2: pool requerido','err')
+          const r = await fetch(`${BACKEND_URL}/damm2/status?pool=${pool}`)
+          const j = await r.json()
+          if (!r.ok) throw new Error(j?.error || 'status DAMM2 falló')
+          addLog(`DAMM2 OK · tokenA=${j.tokenA} · tokenB=${j.tokenB} · wsol=${j.supportsWSOL}`, 'ok')
+        }
+      } catch (e) { addLog('Estado error: ' + (e.message || e), 'err') }
+    }
+
+    $('quoteBtn').onclick = async () => {
+      try {
+        const pool = $('pool').value.trim()
+        const baseMint = $('baseMint').value.trim()
+        const amountSol = $('amountSol').value.trim()
+        if (proto()==='dbc') {
+          if (!amountSol) return addLog('DBC: amountSol requerido', 'err')
+          const qs = new URLSearchParams({ amountSol })
+          if (pool) qs.set('pool', pool)
+          if (!pool && baseMint) qs.set('baseMint', baseMint)
+          const r = await fetch(`${BACKEND_URL}/dbc/quote?${qs.toString()}`)
+          const j = await r.json()
+          if (!r.ok) {
+            if (j?.code === 'MIGRATED_TO_DAMM_V2') addLog('DBC migrado → usa DAMM2', 'err')
+            else addLog('Quote DBC error: ' + (j?.error || 'falló'), 'err')
+            return
+          }
+          addLog(`Quote DBC OK · in=${j.amountInLamports} · minOut=${j.minimumAmountOut}`, 'ok')
+        } else {
+          if (!pool || !amountSol) return addLog('DAMM2: pool y amountSol requeridos', 'err')
+          const qs = new URLSearchParams({ pool, side: 'buy', amount: amountSol })
+          const r = await fetch(`${BACKEND_URL}/damm2/quote?${qs.toString()}`)
+          const j = await r.json()
+          if (!r.ok) return addLog('Quote DAMM2 error: ' + (j?.error || 'falló'), 'err')
+          addLog(`Quote DAMM2 OK · minOut=${j.minSwapOutAmount}`, 'ok')
+        }
+      } catch (e) { addLog('Quote error: ' + (e.message || e), 'err') }
+    }
+
     $('buyBtn').onclick = async () => {
       try {
         if (!provider || !walletPubkey) return addLog('Conecta Phantom primero','err')
-        await resolvePoolOrThrow()
         const pool = $('pool').value.trim()
         const baseMint = $('baseMint').value.trim()
         const amountSol = $('amountSol').value.trim()
         if (!amountSol) return addLog('amountSol requerido','err')
 
-        const body = { buyer: walletPubkey, amountSol }
-        if (pool) body.pool = pool
-        if (baseMint) body.baseMint = baseMint
-
-        const r = await fetch(`${BACKEND_URL}/build-initial-buy`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-        })
-        const j = await r.json()
-        if (!r.ok) {
-          if (j?.code === 'POOL_COMPLETED') addLog('No se puede comprar: pool COMPLETED. Usa vender o otra pool.', 'err')
-          else addLog('Construcción falló: ' + (j?.error || 'desconocido'), 'err')
-          return
+        if (proto()==='dbc') {
+          const body:any = { buyer: walletPubkey, amountSol }
+          if (pool) body.pool = pool
+          if (!pool && baseMint) body.baseMint = baseMint
+          const r = await fetch(`${BACKEND_URL}/dbc/build-buy`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+          })
+          const j = await r.json()
+          if (!r.ok) {
+            if (j?.code === 'MIGRATED_TO_DAMM_V2') addLog('DBC migrado → usa DAMM2', 'err')
+            else addLog('Construcción DBC falló: ' + (j?.error || 'desconocido'), 'err')
+            return
+          }
+          await signSend(j.transaction)
+        } else {
+          if (!pool) return addLog('DAMM2: pool requerido','err')
+          const r = await fetch(`${BACKEND_URL}/damm2/build-swap`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pool, payer: walletPubkey, side: 'buy', amount: amountSol }),
+          })
+          const j = await r.json()
+          if (!r.ok) return addLog('build-swap DAMM2 falló: ' + (j?.error || 'desconocido'), 'err')
+          await signSend(j.transaction)
         }
-        await signSend(j.transaction)
       } catch (e) { addLog('Compra error: ' + (e.message || e), 'err') }
     }
 
     $('sellBtn').onclick = async () => {
       try {
         if (!provider || !walletPubkey) return addLog('Conecta Phantom primero','err')
-        await resolvePoolOrThrow()
         const pool = $('pool').value.trim()
         const amountTokens = $('amountTokens').value.trim()
         if (!amountTokens) return addLog('amountTokens requerido','err')
 
-        const body = { seller: walletPubkey, amountTokens }
-        if (pool) body.pool = pool
-        // si no tienes pool, podrías pasar quoteMint (mint del token)
-
-        const r = await fetch(`${BACKEND_URL}/build-sell`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-        })
-        const j = await r.json()
-        if (!r.ok) return addLog('build-sell falló: ' + (j?.error || 'desconocido'), 'err')
-        await signSend(j.transaction)
+        if (proto()==='dbc') {
+          if (!pool) return addLog('DBC: pool requerido para vender','err')
+          const r = await fetch(`${BACKEND_URL}/dbc/build-sell`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pool, seller: walletPubkey, amountTokens }),
+          })
+          const j = await r.json()
+          if (!r.ok) return addLog('build-sell DBC falló: ' + (j?.error || 'desconocido'), 'err')
+          await signSend(j.transaction)
+        } else {
+          if (!pool) return addLog('DAMM2: pool requerido','err')
+          const r = await fetch(`${BACKEND_URL}/damm2/build-swap`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pool, payer: walletPubkey, side: 'sell', amount: amountTokens }),
+          })
+          const j = await r.json()
+          if (!r.ok) return addLog('build-swap DAMM2 falló: ' + (j?.error || 'desconocido'), 'err')
+          await signSend(j.transaction)
+        }
       } catch (e) { addLog('Venta error: ' + (e.message || e), 'err') }
     }
   </script>

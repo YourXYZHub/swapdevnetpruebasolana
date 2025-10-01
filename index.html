@@ -73,21 +73,30 @@
 
   <script>
     // ===== CONFIG =====
-    const BACKEND_URL = "https://comprartokendevnetbackend-production.up.railway.app"; // pon tu Railway/URL
+    const BACKEND_URL = "https://TU_BACKEND_RAILWAY_AQUI"; // <-- CAMBIA ESTO
     const DEVNET_RPC = "https://api.devnet.solana.com";
-    const WSOL = "So11111111111111111111111111111111111111112"
 
-    const $ = id => document.getElementById(id)
+    const $ = (id) => document.getElementById(id)
     const addLog = (msg, cls='muted') => {
       const l=document.createElement('div'); l.className=cls; l.textContent=`[${new Date().toLocaleTimeString()}] ${msg}`;
       $('log').prepend(l); console.log(msg)
     }
+    const proto = () => $('protocol').value
 
-    let provider=null, walletPubkey=null, conn=null
+    async function fetchJSON(url, opts) {
+      const r = await fetch(url, opts)
+      const text = await r.text()
+      try { return { ok: r.ok, data: JSON.parse(text) } }
+      catch (e) { throw new Error(`No-JSON ${r.status}: ${text.slice(0,160)}`) }
+    }
+
+    let provider = null
+    let walletPubkey = null
+    let conn = null
 
     document.addEventListener('DOMContentLoaded', () => {
       if (!window.solana || !window.solana.isPhantom) addLog('Phantom no detectado', 'err')
-      else { provider=window.solana; addLog('Phantom detectado ✅','ok') }
+      else { provider = window.solana; addLog('Phantom detectado ✅','ok') }
       conn = new solanaWeb3.Connection(DEVNET_RPC, 'confirmed'); addLog('Conexión Devnet lista', 'ok')
     })
 
@@ -101,8 +110,6 @@
         addLog('Wallet conectada', 'ok')
       } catch (e) { addLog('Connect cancelado: ' + (e.message || e), 'err') }
     }
-
-    function proto() { return $('protocol').value }
 
     async function signSend(rawB64) {
       const raw = Uint8Array.from(atob(rawB64), c => c.charCodeAt(0))
@@ -129,6 +136,7 @@
       }
     }
 
+    // ===== Botones =====
     $('checkBtn').onclick = async () => {
       try {
         const pool = $('pool').value.trim()
@@ -138,17 +146,15 @@
           const qs = new URLSearchParams({})
           if (pool) qs.set('pool', pool)
           if (baseMint) qs.set('baseMint', baseMint)
-          const r = await fetch(`${BACKEND_URL}/dbc/resolve?${qs.toString()}`)
-          const j = await r.json()
-          if (!r.ok) throw new Error(j?.error || 'resolve DBC falló')
-          if (!$('pool').value && j.pool) $('pool').value = j.pool
-          addLog(`DBC OK · pool=${j.pool} · completed=${j.isCompleted}`, j.isCompleted?'err':'ok')
+          const { ok, data } = await fetchJSON(`${BACKEND_URL}/dbc/resolve?${qs.toString()}`)
+          if (!ok) throw new Error(data?.error || 'resolve DBC falló')
+          if (!$('pool').value && data.pool) $('pool').value = data.pool
+          addLog(`DBC OK · pool=${data.pool} · completed=${data.isCompleted}`, data.isCompleted?'err':'ok')
         } else {
           if (!pool) return addLog('DAMM2: pool requerido','err')
-          const r = await fetch(`${BACKEND_URL}/damm2/status?pool=${pool}`)
-          const j = await r.json()
-          if (!r.ok) throw new Error(j?.error || 'status DAMM2 falló')
-          addLog(`DAMM2 OK · tokenA=${j.tokenA} · tokenB=${j.tokenB} · wsol=${j.supportsWSOL}`, 'ok')
+          const { ok, data } = await fetchJSON(`${BACKEND_URL}/damm2/status?pool=${pool}`)
+          if (!ok) throw new Error(data?.error || 'status DAMM2 falló')
+          addLog(`DAMM2 OK · tokenA=${data.tokenA} · tokenB=${data.tokenB} · wsol=${data.supportsWSOL}`, 'ok')
         }
       } catch (e) { addLog('Estado error: ' + (e.message || e), 'err') }
     }
@@ -163,21 +169,18 @@
           const qs = new URLSearchParams({ amountSol })
           if (pool) qs.set('pool', pool)
           if (!pool && baseMint) qs.set('baseMint', baseMint)
-          const r = await fetch(`${BACKEND_URL}/dbc/quote?${qs.toString()}`)
-          const j = await r.json()
-          if (!r.ok) {
-            if (j?.code === 'MIGRATED_TO_DAMM_V2') addLog('DBC migrado → usa DAMM2', 'err')
-            else addLog('Quote DBC error: ' + (j?.error || 'falló'), 'err')
+          const { ok, data } = await fetchJSON(`${BACKEND_URL}/dbc/quote?${qs.toString()}`)
+          if (!ok) {
+            if (data?.code === 'MIGRATED_TO_DAMM_V2') addLog('DBC migrado → usa DAMM2', 'err')
+            else addLog('Quote DBC error: ' + (data?.error || 'falló'), 'err')
             return
           }
-          addLog(`Quote DBC OK · in=${j.amountInLamports} · minOut=${j.minimumAmountOut}`, 'ok')
+          addLog(`Quote DBC OK · in=${data.amountInLamports} · minOut=${data.minimumAmountOut}`, 'ok')
         } else {
           if (!pool || !amountSol) return addLog('DAMM2: pool y amountSol requeridos', 'err')
-          const qs = new URLSearchParams({ pool, side: 'buy', amount: amountSol })
-          const r = await fetch(`${BACKEND_URL}/damm2/quote?${qs.toString()}`)
-          const j = await r.json()
-          if (!r.ok) return addLog('Quote DAMM2 error: ' + (j?.error || 'falló'), 'err')
-          addLog(`Quote DAMM2 OK · minOut=${j.minSwapOutAmount}`, 'ok')
+          const { ok, data } = await fetchJSON(`${BACKEND_URL}/damm2/quote?pool=${pool}&side=buy&amount=${amountSol}`)
+          if (!ok) return addLog('Quote DAMM2 error: ' + (data?.error || 'falló'), 'err')
+          addLog(`Quote DAMM2 OK · minOut=${data.minSwapOutAmount}`, 'ok')
         }
       } catch (e) { addLog('Quote error: ' + (e.message || e), 'err') }
     }
@@ -191,28 +194,26 @@
         if (!amountSol) return addLog('amountSol requerido','err')
 
         if (proto()==='dbc') {
-          const body:any = { buyer: walletPubkey, amountSol }
+          const body = { buyer: walletPubkey, amountSol }
           if (pool) body.pool = pool
           if (!pool && baseMint) body.baseMint = baseMint
-          const r = await fetch(`${BACKEND_URL}/dbc/build-buy`, {
+          const { ok, data } = await fetchJSON(`${BACKEND_URL}/dbc/build-buy`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
           })
-          const j = await r.json()
-          if (!r.ok) {
-            if (j?.code === 'MIGRATED_TO_DAMM_V2') addLog('DBC migrado → usa DAMM2', 'err')
-            else addLog('Construcción DBC falló: ' + (j?.error || 'desconocido'), 'err')
+          if (!ok) {
+            if (data?.code === 'MIGRATED_TO_DAMM_V2') addLog('DBC migrado → usa DAMM2', 'err')
+            else addLog('Construcción DBC falló: ' + (data?.error || 'desconocido'), 'err')
             return
           }
-          await signSend(j.transaction)
+          await signSend(data.transaction)
         } else {
           if (!pool) return addLog('DAMM2: pool requerido','err')
-          const r = await fetch(`${BACKEND_URL}/damm2/build-swap`, {
+          const { ok, data } = await fetchJSON(`${BACKEND_URL}/damm2/build-swap`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ pool, payer: walletPubkey, side: 'buy', amount: amountSol }),
           })
-          const j = await r.json()
-          if (!r.ok) return addLog('build-swap DAMM2 falló: ' + (j?.error || 'desconocido'), 'err')
-          await signSend(j.transaction)
+          if (!ok) return addLog('build-swap DAMM2 falló: ' + (data?.error || 'desconocido'), 'err')
+          await signSend(data.transaction)
         }
       } catch (e) { addLog('Compra error: ' + (e.message || e), 'err') }
     }
@@ -226,22 +227,20 @@
 
         if (proto()==='dbc') {
           if (!pool) return addLog('DBC: pool requerido para vender','err')
-          const r = await fetch(`${BACKEND_URL}/dbc/build-sell`, {
+          const { ok, data } = await fetchJSON(`${BACKEND_URL}/dbc/build-sell`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ pool, seller: walletPubkey, amountTokens }),
           })
-          const j = await r.json()
-          if (!r.ok) return addLog('build-sell DBC falló: ' + (j?.error || 'desconocido'), 'err')
-          await signSend(j.transaction)
+          if (!ok) return addLog('build-sell DBC falló: ' + (data?.error || 'desconocido'), 'err')
+          await signSend(data.transaction)
         } else {
           if (!pool) return addLog('DAMM2: pool requerido','err')
-          const r = await fetch(`${BACKEND_URL}/damm2/build-swap`, {
+          const { ok, data } = await fetchJSON(`${BACKEND_URL}/damm2/build-swap`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ pool, payer: walletPubkey, side: 'sell', amount: amountTokens }),
           })
-          const j = await r.json()
-          if (!r.ok) return addLog('build-swap DAMM2 falló: ' + (j?.error || 'desconocido'), 'err')
-          await signSend(j.transaction)
+          if (!ok) return addLog('build-swap DAMM2 falló: ' + (data?.error || 'desconocido'), 'err')
+          await signSend(data.transaction)
         }
       } catch (e) { addLog('Venta error: ' + (e.message || e), 'err') }
     }
